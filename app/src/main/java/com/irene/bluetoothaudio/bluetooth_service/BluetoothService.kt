@@ -26,7 +26,7 @@ enum class State {
     STATE_CONNECTED, // now connected to a remote device
     STATE_DISCONNECTING
 }
-
+//name: MAJOR III BLUETOOTH address: 2C:4D:79:DA:0E:0A type: 1
 const val BLUETOOTH_NOT_ENABLED = "BLUETOOTH not enabled."
 
 class BluetoothService constructor(private val context: Context) {
@@ -99,6 +99,10 @@ class BluetoothService constructor(private val context: Context) {
                         intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE)
                     safeLet(device, callback) { _device, _callback ->
                         log("name: ${_device.name} address: ${_device.address} type: ${_device.type}")
+                        if (_device.address == "2C:4D:79:DA:0E:0A") {
+                            log("MAJOR III BLUETOOTH found!")
+                            connect(_device)
+                        }
                         _callback.onDeviceDiscovered(_device)
                     }
                 }
@@ -111,6 +115,7 @@ class BluetoothService constructor(private val context: Context) {
 
     private val connectionStateBroadcastReceiver = object : BroadcastReceiver() {
 
+        @SuppressLint("MissingPermission")
         override fun onReceive(context: Context, intent: Intent) {
             log("onReceive")
 
@@ -127,6 +132,7 @@ class BluetoothService constructor(private val context: Context) {
                     log("ACTION_ACL_CONNECTED")
                     val device: BluetoothDevice? =
                         intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE)
+                    log("ACTION_ACL_CONNECTED to ${device?.name}")
                     device?.let {
                         callback?.onDeviceConnected(device)
                     }

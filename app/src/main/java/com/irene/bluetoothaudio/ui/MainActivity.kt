@@ -2,14 +2,17 @@ package com.irene.bluetoothaudio.ui
 
 import android.annotation.SuppressLint
 import android.bluetooth.BluetoothAdapter
+import android.content.Context
 import android.content.Intent
-import android.media.MediaPlayer
-import android.media.MediaRecorder
+import android.content.pm.PackageManager
+import android.media.*
+import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.annotation.RequiresApi
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material.Button
@@ -47,13 +50,41 @@ class MainActivity : ComponentActivity() {
 
     private var player: MediaPlayer? = null
 
+    val audioManager = this.getSystemService(Context.AUDIO_SERVICE) as AudioManager
 
+    @RequiresApi(Build.VERSION_CODES.M)
+    fun audioOutputAvailable(type: Int): Boolean {
+        if (!packageManager.hasSystemFeature(PackageManager.FEATURE_AUDIO_OUTPUT)) {
+            return false
+        }
+        return audioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS).any { it.type == type }
+    }
+
+    @RequiresApi(Build.VERSION_CODES.M)
+    val audioCallback =  object : AudioDeviceCallback() {
+        override fun onAudioDevicesAdded(addedDevices: Array<out AudioDeviceInfo>?) {
+            super.onAudioDevicesAdded(addedDevices)
+            if (audioOutputAvailable(AudioDeviceInfo.TYPE_BLUETOOTH_A2DP)) {
+                // a bluetooth headset has just been connected
+            }
+        }
+        override fun onAudioDevicesRemoved(removedDevices: Array<out AudioDeviceInfo>?) {
+            super.onAudioDevicesRemoved(removedDevices)
+            if (!audioOutputAvailable(AudioDeviceInfo.TYPE_BLUETOOTH_A2DP)) {
+                // a bluetooth headset is no longer connected
+            }
+        }
+    }
+
+
+    @RequiresApi(Build.VERSION_CODES.M)
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         if (!isPermissionsGranted())
             requestPermissions(REQUEST_CODE)
 
         fileName = "${externalCacheDir!!.absolutePath}/audiorecordtest.3gp"
+        audioManager.registerAudioDeviceCallback(audioCallback, null)
 
         setContent {
 
