@@ -2,19 +2,18 @@ package com.irene.bluetoothaudio.ui
 
 import android.annotation.SuppressLint
 import android.bluetooth.BluetoothAdapter
-import android.content.Context
 import android.content.Intent
-import android.content.pm.PackageManager
 import android.media.*
 import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
-import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.annotation.RequiresApi
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.Button
 import androidx.compose.material.MaterialTheme
 import androidx.compose.material.Surface
@@ -22,14 +21,11 @@ import androidx.compose.material.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.tooling.preview.Preview
+import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import com.irene.bluetoothaudio.bluetooth_repository.BluetoothRepository
-import com.irene.bluetoothaudio.bluetooth_service.BLUETOOTH_NOT_ENABLED
 import com.irene.bluetoothaudio.ui.theme.BluetoothAudioTheme
-import com.irene.bluetoothaudio.utils.OnLifecycleEvent
-import com.irene.bluetoothaudio.utils.isPermissionsGranted
-import com.irene.bluetoothaudio.utils.log
-import com.irene.bluetoothaudio.utils.requestPermissions
+import com.irene.bluetoothaudio.utils.*
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.launch
 import java.io.IOException
@@ -44,38 +40,11 @@ class MainActivity : ComponentActivity() {
     @Inject
     lateinit var bluetoothRepository: BluetoothRepository
 
-    private var fileName: String = ""
-
     private var recorder: MediaRecorder? = null
 
     private var player: MediaPlayer? = null
 
-    val audioManager = this.getSystemService(Context.AUDIO_SERVICE) as AudioManager
-
-    @RequiresApi(Build.VERSION_CODES.M)
-    fun audioOutputAvailable(type: Int): Boolean {
-        if (!packageManager.hasSystemFeature(PackageManager.FEATURE_AUDIO_OUTPUT)) {
-            return false
-        }
-        return audioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS).any { it.type == type }
-    }
-
-    @RequiresApi(Build.VERSION_CODES.M)
-    val audioCallback =  object : AudioDeviceCallback() {
-        override fun onAudioDevicesAdded(addedDevices: Array<out AudioDeviceInfo>?) {
-            super.onAudioDevicesAdded(addedDevices)
-            if (audioOutputAvailable(AudioDeviceInfo.TYPE_BLUETOOTH_A2DP)) {
-                // a bluetooth headset has just been connected
-            }
-        }
-        override fun onAudioDevicesRemoved(removedDevices: Array<out AudioDeviceInfo>?) {
-            super.onAudioDevicesRemoved(removedDevices)
-            if (!audioOutputAvailable(AudioDeviceInfo.TYPE_BLUETOOTH_A2DP)) {
-                // a bluetooth headset is no longer connected
-            }
-        }
-    }
-
+//name: MAJOR III BLUETOOTH address: 2C:4D:79:DA:0E:0A type: 1
 
     @RequiresApi(Build.VERSION_CODES.M)
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -83,29 +52,24 @@ class MainActivity : ComponentActivity() {
         if (!isPermissionsGranted())
             requestPermissions(REQUEST_CODE)
 
-        fileName = "${externalCacheDir!!.absolutePath}/audiorecordtest.3gp"
-        audioManager.registerAudioDeviceCallback(audioCallback, null)
-
         setContent {
 
             val scope = rememberCoroutineScope()
-            StartScan()
+//            StartScan()
 
-            var startPlaying by remember{mutableStateOf(true)}
-            var startRecording by remember{mutableStateOf(true)}
+            /*var startPlaying by remember{mutableStateOf(true)}
+            var startRecording by remember{mutableStateOf(true)}*/
 
-            val errors = bluetoothRepository.errorsStateFlow.collectAsState()
-            if (errors.value == BLUETOOTH_NOT_ENABLED){
-                promptEnableBluetooth()
-            }
+            val scannedDevices = bluetoothRepository.scannedDeviceStateFlow.collectAsState()
 
             OnLifecycleEvent { _, event ->
                 when (event) {
                     Lifecycle.Event.ON_RESUME,
                     Lifecycle.Event.ON_START,
                     -> {
+//                        promptEnableBluetooth()
                         scope.launch {
-                            bluetoothRepository.scanningDevices()
+//                            bluetoothRepository.scanningDevices()
                         }
                     }
                     Lifecycle.Event.ON_DESTROY -> {}
@@ -123,19 +87,34 @@ class MainActivity : ComponentActivity() {
                         Greeting("Android")
                         Button(
                             onClick = {
-                                onPlay(startPlaying)
-                                startPlaying = !startPlaying
+                                if (bluetoothRepository.isBluetoothOn)
+                                    scope.launch {
+                                        bluetoothRepository.scanningDevices()
+                                    }
+                                else promptEnableBluetooth()
                             }
                         ) {
-                            Text(text = if (startPlaying) "Start playing" else "Stop playing")
+                            Text(text = "Start device scan")
                         }
                         Button(
                             onClick = {
-                                onRecord(startRecording)
-                                startRecording = !startRecording
+                                val audioRecorder = AudioRecorder(this@MainActivity)
+                                audioRecorder.turnOnBluetooth()
+                                audioRecorder.createAudioManager(scope)
                             }
                         ) {
-                            Text(text = if (startRecording) "Start recording" else "Stop recording")
+                            Text(text = "Record and play")
+                        }
+                        Column(
+                            modifier = Modifier
+                                .padding(16.dp)
+                                .verticalScroll(rememberScrollState())
+                        ) {
+                            for (device in scannedDevices.value) {
+                                ScannedDeviceItem(device.name, device.macAddress) { macAddress ->
+                                    bluetoothRepository.connectToDevice(macAddress)
+                                }
+                            }
                         }
                     }
 
@@ -143,66 +122,6 @@ class MainActivity : ComponentActivity() {
             }
         }
     }
-
-    private fun onRecord(start: Boolean) = if (start) {
-        startRecording()
-    } else {
-        stopRecording()
-    }
-
-    private fun onPlay(start: Boolean) = if (start) {
-        startPlaying()
-    } else {
-        stopPlaying()
-    }
-
-    private fun startPlaying() {
-        log("startPlaying")
-        player = MediaPlayer().apply {
-            try {
-                setDataSource(fileName)
-                prepare()
-                start()
-            } catch (e: IOException) {
-                log("prepare() failed")
-            }
-        }
-    }
-
-    private fun stopPlaying() {
-        log("stopPlaying")
-        player?.release()
-        player = null
-    }
-
-    private fun startRecording() {
-        log("startRecording")
-        recorder = MediaRecorder().apply {
-            setAudioSource(MediaRecorder.AudioSource.MIC)
-            setOutputFormat(MediaRecorder.OutputFormat.THREE_GPP)
-            setOutputFile(fileName)
-            setAudioEncoder(MediaRecorder.AudioEncoder.AMR_NB)
-
-            try {
-                prepare()
-            } catch (e: IOException) {
-                log("prepare() failed")
-            }
-
-            start()
-        }
-    }
-
-    private fun stopRecording() {
-        log("stopRecording")
-        recorder?.apply {
-            stop()
-            release()
-        }
-        recorder = null
-    }
-
-
 
     @Composable
     fun StartScan() {
@@ -217,8 +136,6 @@ class MainActivity : ComponentActivity() {
         startActivityForResult(enableBtIntent, ENABLE_BLUETOOTH_REQUEST_CODE)
     }
 }
-
-
 
 
 @Composable

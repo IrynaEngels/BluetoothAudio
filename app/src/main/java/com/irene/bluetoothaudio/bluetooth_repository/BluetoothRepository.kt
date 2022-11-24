@@ -9,9 +9,7 @@ import com.irene.bluetoothaudio.bluetooth_service.IBluetoothSDKListener
 import com.irene.bluetoothaudio.models.Device
 import com.irene.bluetoothaudio.models.DeviceError
 import com.irene.bluetoothaudio.models.ScannedDevice
-import com.irene.bluetoothaudio.utils.log
-import com.irene.bluetoothaudio.utils.safeOffer
-import com.irene.bluetoothaudio.utils.safeOfferCatching
+import com.irene.bluetoothaudio.utils.*
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.channels.ConflatedBroadcastChannel
 import kotlinx.coroutines.flow.*
@@ -25,12 +23,19 @@ class BluetoothRepository @Inject constructor(
 )  {
 
     private val list = mutableListOf<ScannedDevice>()
+    private val scannedBluetoothDevices = mutableListOf<BluetoothDevice>()
     private var scannedDeviceList: Channel<List<ScannedDevice>> = Channel()
     private var connectedDevices: ConflatedBroadcastChannel<Set<Device>> =
         ConflatedBroadcastChannel(mutableSetOf())
     private var _error = Channel<DeviceError>(Channel.UNLIMITED)
     private var messageSent = Channel<String>(Channel.UNLIMITED)
 
+    private val _scannedDevices: MutableStateFlow<List<ScannedDevice>> =
+        MutableStateFlow(listOf())
+
+    val scannedDeviceStateFlow: StateFlow<List<ScannedDevice>> = _scannedDevices.asStateFlow()
+
+    val isBluetoothOn = bluetoothService.isBluetoothOn()
 
     private val _errors: MutableStateFlow<String> =
         MutableStateFlow("")
@@ -59,6 +64,13 @@ class BluetoothRepository @Inject constructor(
                     device = device
                 )
             )
+            scannedBluetoothDevices.add(device)
+            val devices = mutableListOf<ScannedDevice>()
+            for (item in list){
+                if (!devices.containsDevice(item))
+                    devices.add(item)
+            }
+            _scannedDevices.value = devices
             scannedDeviceList.safeOffer(list)
         }
 
@@ -123,13 +135,18 @@ class BluetoothRepository @Inject constructor(
     }
 
     suspend fun scanningDevices(): Flow<List<ScannedDevice>> {
+
+        log("scanningDevices")
         scannedDeviceList = Channel()
         bluetoothService.callback = bluetoothSDKListener
 
         return suspendCancellableCoroutine { continuation ->
             bluetoothService.startDiscovery()
 
+            log("suspendCancellableCoroutine ")
+
             continuation.resume(flow {
+                log("resume flow")
                 scannedDeviceList.consumeAsFlow().collect { founded ->
                     log("Result scan -> $founded")
                     emit(founded)
@@ -138,8 +155,13 @@ class BluetoothRepository @Inject constructor(
         }
     }
 
-    fun connectToDevice(device: BluetoothDevice) {
-        bluetoothService.connect(device)
+    fun connectToDevice(macAddress: String) {
+        val bluetoothDevice = macAddress.getBluetoothDeviceByMacAddress(scannedBluetoothDevices)
+        bluetoothDevice?.let {
+            log("bluetoothDevice bond")
+            bluetoothService.bondWithDevice(bluetoothDevice)
+        }
+
     }
 
     fun stopScanning() {

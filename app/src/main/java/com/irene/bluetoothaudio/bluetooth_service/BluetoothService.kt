@@ -1,19 +1,19 @@
 package com.irene.bluetoothaudio.bluetooth_service
 
 import android.annotation.SuppressLint
-import android.bluetooth.BluetoothAdapter
-import android.bluetooth.BluetoothDevice
-import android.bluetooth.BluetoothManager
-import android.bluetooth.BluetoothSocket
+import android.bluetooth.*
 import android.bluetooth.le.ScanCallback
 import android.bluetooth.le.ScanResult
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.os.ParcelUuid
 import com.irene.bluetoothaudio.utils.log
 import com.irene.bluetoothaudio.utils.safeLet
 import java.io.IOException
+import java.lang.reflect.InvocationTargetException
+import java.lang.reflect.Method
 import java.nio.CharBuffer
 import java.util.*
 
@@ -26,8 +26,6 @@ enum class State {
     STATE_CONNECTED, // now connected to a remote device
     STATE_DISCONNECTING
 }
-//name: MAJOR III BLUETOOTH address: 2C:4D:79:DA:0E:0A type: 1
-const val BLUETOOTH_NOT_ENABLED = "BLUETOOTH not enabled."
 
 class BluetoothService constructor(private val context: Context) {
 
@@ -66,7 +64,6 @@ class BluetoothService constructor(private val context: Context) {
         val scanCallback: ScanCallback = object : ScanCallback() {
             override fun onScanResult(callbackType: Int, result: ScanResult) {
                 val device: BluetoothDevice = result.getDevice()
-                log("found device $device")
                 // ...do whatever you want with this found device
             }
 
@@ -95,16 +92,20 @@ class BluetoothService constructor(private val context: Context) {
             when(intent.action) {
                 BluetoothDevice.ACTION_FOUND -> {
                     log("device found  ${intent.extras.toString()}")
+                    //Bundle[{android.bluetooth.device.extra.CLASS=1f00, android.bluetooth.device.extra.DEVICE=C3:CC:DF:A8:E1:96, android.bluetooth.device.extra.NAME=Amazfit Bip U, android.bluetooth.device.extra.RSSI=-97}]
                     val device: BluetoothDevice? =
                         intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE)
+
+//                    bluetoothAdapter?.getProfileConnectionState(BluetoothHeadset.HEADSET) == BluetoothHeadset.STATE_CONNECTED
+
+//                    getUUIDs()
                     safeLet(device, callback) { _device, _callback ->
-                        log("name: ${_device.name} address: ${_device.address} type: ${_device.type}")
-                        if (_device.address == "2C:4D:79:DA:0E:0A") {
-                            log("MAJOR III BLUETOOTH found!")
-                            connect(_device)
-                        }
                         _callback.onDeviceDiscovered(_device)
                     }
+                }
+                BluetoothDevice.ACTION_UUID ->{
+                    val uuidExtra = intent.getParcelableArrayExtra(BluetoothDevice.EXTRA_UUID)
+                    log("uuidExtra ${uuidExtra}")
                 }
                 BluetoothAdapter.ACTION_DISCOVERY_FINISHED -> {
                     log("ACTION_DISCOVERY_FINISHED")
@@ -113,9 +114,33 @@ class BluetoothService constructor(private val context: Context) {
         }
     }
 
+    fun getUUIDs(){
+        log("getUUIDs")
+        try {
+            val getUuidsMethod: Method =
+                BluetoothAdapter::class.java.getDeclaredMethod("getUuids", null)
+            val uuids = getUuidsMethod.invoke(bluetoothAdapter, null) as Array<ParcelUuid>?
+            log("uuids = $uuids")
+            if (uuids != null) {
+                for (uuid in uuids) {
+                    log("UUID: " + uuid.uuid.toString())
+                }
+            } else {
+                log("Uuids not found, be sure to enable Bluetooth!")
+            }
+        } catch (e: NoSuchMethodException) {
+            log("NoSuchMethodException")
+            e.printStackTrace()
+        } catch (e: IllegalAccessException) {
+            log("IllegalAccessException")
+            e.printStackTrace()
+        } catch (e: InvocationTargetException) {
+            log("InvocationTargetException")
+            e.printStackTrace()
+        }
+    }
     private val connectionStateBroadcastReceiver = object : BroadcastReceiver() {
 
-        @SuppressLint("MissingPermission")
         override fun onReceive(context: Context, intent: Intent) {
             log("onReceive")
 
@@ -132,7 +157,6 @@ class BluetoothService constructor(private val context: Context) {
                     log("ACTION_ACL_CONNECTED")
                     val device: BluetoothDevice? =
                         intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE)
-                    log("ACTION_ACL_CONNECTED to ${device?.name}")
                     device?.let {
                         callback?.onDeviceConnected(device)
                     }
@@ -215,7 +239,6 @@ class BluetoothService constructor(private val context: Context) {
     }
 
     private fun registerConnectionBroadcastReceivers() {
-
         context.registerReceiver(
             connectionStateBroadcastReceiver,
             IntentFilter(BluetoothDevice.ACTION_ACL_DISCONNECTED)
@@ -240,13 +263,14 @@ class BluetoothService constructor(private val context: Context) {
         // Register for broadcasts when discovery has finished
         val filter = IntentFilter(BluetoothDevice.ACTION_FOUND)
         filter.addAction(BluetoothAdapter.ACTION_DISCOVERY_FINISHED)
+        filter.addAction(BluetoothDevice.ACTION_UUID)
         filter.addAction(BluetoothDevice.ACTION_ACL_DISCONNECTED)
         context.registerReceiver(discoveryBroadcastReceiver, filter)
         if (bluetoothAdapter?.isEnabled == true) {
             bluetoothAdapter?.startDiscovery()
             callback?.onDiscoveryStarted()
         } else {
-            callback?.onError(message = BLUETOOTH_NOT_ENABLED)
+            callback?.onError(message = "BLUETOOTH not enabled.")
         }
     }
 
@@ -270,11 +294,25 @@ class BluetoothService constructor(private val context: Context) {
         return connectionState
     }
 
+    fun isBluetoothOn(): Boolean{
+        bluetoothAdapter?.let {
+            return it.isEnabled
+        }
+        return false
+    }
+
+    @SuppressLint("MissingPermission")
+    fun bondWithDevice(found: BluetoothDevice){
+        found.createBond()
+    }
+    @SuppressLint("MissingPermission")
     @Synchronized
     fun connect(found: BluetoothDevice) {
         log("connect to: $found")
         registerConnectionBroadcastReceivers()
         // Cancel any thread attempting to make a connection
+//        for (item in found.uuids)
+//            log("${found.name} - $item")
         if (connectionState != State.STATE_CONNECTING
             && connectionState != State.STATE_DISCONNECTING) {
             synchronized(this@BluetoothService) {
@@ -404,7 +442,7 @@ class BluetoothService constructor(private val context: Context) {
                         com.irene.bluetoothaudio.bluetooth_service.State.STATE_CONNECTING
                 }
             } catch (e: Exception) {
-                log("Socket create() failed $e")
+                log("Socket create() failed")
                 connectionFailed(device.address)
             }
 
@@ -422,14 +460,14 @@ class BluetoothService constructor(private val context: Context) {
                 // successful connection or an exception
                 mmSocket!!.connect()
             } catch (e: Exception) {
-                log(e.toString())
+                log( "ConnectingThread Exception: $e")
                 // Close the socket
                 try {
+                    log("ConnectingThread Close Socket")
                     mmSocket?.close()
                 } catch (e2: IOException) {
                     log(
-                         "unable to close() " +
-                                " socket during connection failure $e2"
+                        "unable to close() socket during connection failure"
                     )
                 }
                 connectionFailed(device.address)
@@ -445,6 +483,7 @@ class BluetoothService constructor(private val context: Context) {
         // Call this method to shut down the connection.
         fun cancel() {
             try {
+                log("close Socket from cancel")
                 mmSocket?.close()
             } catch (e: Exception) {
                 callback?.onError( macAddress = device.address, message = "Could not close the connect socket")
@@ -460,7 +499,7 @@ class BluetoothService constructor(private val context: Context) {
     inner class ConnectedThread(
         val device: BluetoothDevice,
         private val mmSocket: BluetoothSocket
-        ) : Thread() {
+    ) : Thread() {
 
         private val mmInReader = mmSocket.inputStream.bufferedReader()
         private val mmOutWriter = mmSocket.outputStream.bufferedWriter()
@@ -505,6 +544,7 @@ class BluetoothService constructor(private val context: Context) {
         // Call this method to shut down the connection.
         fun cancel() {
             try {
+                log("close socket connected thread")
                 mmSocket.close()
             } catch (e: IOException) {
                 callback?.onError( macAddress = device.address, message = "Could not close the connect socket")
